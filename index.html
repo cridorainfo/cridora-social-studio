@@ -214,6 +214,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
 .f-story h1{font-size:122px}.f-story.lang-ar h1{font-size:100px}.f-story .rc-price strong{font-size:104px}
 .f-story .cards{grid-template-columns:1fr}.f-story .hero-bars{height:470px}
 .f-story .box p{font-size:32px}.f-story .lede{font-size:40px}
+.f-story .p-main{gap:36px}.f-story .cards{gap:20px}.f-story .rc{padding:26px 32px 24px}.f-story .rc-row{margin-top:16px;padding-top:14px}.f-story .rc-lab{margin-top:16px}
 .f-land .p-in{padding:60px 76px 54px;gap:22px}.f-land .p-frame{inset:20px;border-radius:26px}
 .f-land h1{font-size:78px}.f-land.lang-ar h1{font-size:66px}.f-land .wm{font-size:50px}
 .f-land .p-main{flex-direction:row;align-items:center;gap:52px}
@@ -272,7 +273,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
           <label class="field">Silver retail AED/g<input id="sRetail" inputmode="decimal" placeholder="optional"></label>
         </div>
         <label class="field">Savings amounts (AED, comma separated)<input id="amounts" value="500, 1000, 5000"></label>
-        <p class="note">Gold, silver and the gold retail benchmark load automatically. There is no trusted silver retail source yet, so leave the silver retail field empty or type a rate you have checked. Edit any number here before posting.</p>
+        <p class="note">Gold, silver and the gold retail benchmark load automatically. The silver retail rate is a daily reading saved with the page (source and date shown in the status line), so check it before posting and edit it here if it has moved.</p>
       </div>
     </details>
   </aside>
@@ -357,7 +358,7 @@ function applyRates(d) {
   R.silver.sell = d.silver?.sell ?? null
   R.silver.sellback = d.silver?.sellback ?? null
   const sr = d.silver?.retail || d.silver_retail
-  if (sr?.rate) { R.silver.retail = sr.rate; R.silverRetail = {source: sr.source || '', at: sr.updated_at || null} }
+  if (sr?.rate) { R.silver.retail = sr.rate; R.silverRetail = {source: sr.source || '', date: sr.as_of || null} }
   R.updated = d.updated_at || null
   R.live = !!d.live
   R.yoy = d.gold.yoy_pct ?? null
@@ -373,9 +374,14 @@ async function loadRates(toastIt) {
   if (got) {
     const {d, kind} = got
     applyRates(d)
+    // The public feed has no silver retail rate. Take the dated reading saved with the page.
+    if (!R.silver.retail) {
+      try { const sn = await (await fetch('./rates.json', {cache: 'no-store'})).json(); if (sn.silver_retail?.rate) { R.silver.retail = sn.silver_retail.rate; R.silverRetail = {source: sn.silver_retail.source || '', date: sn.silver_retail.as_of || null}; syncInputs() } } catch {}
+    }
     R.kind = kind
     if (kind === 'live') setStatus('live', `${d.live ? 'Live' : 'Last known'} rates · ${fmtTime(R.updated)} UAE`)
     else setStatus('warn', `Saved rates from ${fmtTime(R.updated)} UAE. Check them against cridora.com and edit below before posting.`)
+    if (R.silverRetail?.date) $('#statusTxt').textContent += ` Silver retail ${R.silver.retail} is a daily reading from ${sourceLabel(R.silverRetail.source)}, ${fmtDate(R.silverRetail.date)}.`
     if (toastIt) toast(kind === 'live' ? 'Rates refreshed' : 'Showing the saved rates')
   } else {
     const m = store('cs-manual')
@@ -384,7 +390,8 @@ async function loadRates(toastIt) {
   }
   renderAll()
 }
-const sourceLabel = k => ({dubaicityofgold: 'Dubai City of Gold', mintjewels: 'Mint Jewels'}[k] || k)
+const sourceLabel = k => ({dubaicityofgold: 'Dubai City of Gold', uaegoldprice: 'UAE Gold Price'}[k] || k)
+const fmtDate = d => new Intl.DateTimeFormat('en-GB', {timeZone: 'UTC', day: 'numeric', month: 'short'}).format(new Date(d + 'T12:00:00Z'))
 function setStatus(kind, txt) { const s = $('#status'); s.className = 'status ' + kind; $('#statusTxt').textContent = txt }
 const fmtTime = iso => iso ? new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Dubai', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false}).format(new Date(iso)).replace(',', ' ·') : ''
 function syncInputs() {
@@ -559,9 +566,10 @@ function metalCard(m) {
   const sub = g ? '24K · 999.9' : '999'
   const lab = retailOnly ? L('UAE retail', 'سعر التجزئة', 'inl') : L('Cridora rate', 'سعر كريدورا', 'inl')
   const src = g ? R.retailSource : R.silverRetail?.source
+  const when = !g && R.silverRetail?.date ? fmtDate(R.silverRetail.date) : ''
   let row = ''
-  if (retailOnly) row = src ? `<div class="rc-row"><span>${L('Source', 'المصدر', 'inl')}</span><b class="sm">${esc(sourceLabel(src))}</b></div>` : ''
-  else if (show === 'vs' && r.retail) row = `<div class="rc-row"><span>${L('UAE retail', 'سعر التجزئة', 'inl')}</span><b>AED ${money(r.retail, dp)}</b></div>`
+  if (retailOnly) row = src ? `<div class="rc-row"><span>${L('Source', 'المصدر', 'inl')}</span><b class="sm">${esc(sourceLabel(src) + (when ? ' · ' + when : ''))}</b></div>` : ''
+  else if (show === 'vs' && r.retail) row = `<div class="rc-row"><span>${when ? L('Retail', 'التجزئة', 'inl') + ` <bdi>(${when})</bdi>` : L('UAE retail', 'سعر التجزئة', 'inl')}</span><b>AED ${money(r.retail, dp)}</b></div>`
   else if (r.sellback) row = `<div class="rc-row"><span>${L('Sell back', 'إعادة البيع', 'inl')}</span><b>AED ${money(r.sellback, dp)}</b></div>`
   return `<div class="rc ${m}${retailOnly ? ' ret' : ''}">
     <img class="rc-art" src="${g ? IMG.barGold : IMG.barSilver}" alt="">

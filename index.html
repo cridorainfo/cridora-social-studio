@@ -269,7 +269,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
           <label class="field">Silver retail AED/g<input id="sRetail" inputmode="decimal" placeholder="optional"></label>
         </div>
         <label class="field">Savings amounts (AED, comma separated)<input id="amounts" value="500, 1000, 5000"></label>
-        <p class="note">Gold, silver and the gold retail benchmark load live. The public pricing feed does not publish a silver retail rate, so enter one here if you want it on a post.</p>
+        <p class="note">Gold, silver and the gold retail benchmark load live. The public pricing feed leaves out the silver retail rate, so it comes from a saved Mint Jewels reading (shown with its time). Edit any number here before posting.</p>
       </div>
     </details>
   </aside>
@@ -329,7 +329,7 @@ const METALS = [{id: 'both', name: 'Gold + silver'}, {id: 'gold', name: 'Gold'},
 
 const S = Object.assign({fmt: 'post', tpl: 'rates', lang: 'both', theme: 'dark', metal: 'both', date: uaeToday(), trend: 'auto0', angle: null, variant: 0, cEn: '', cAr: ''}, store('cs-state') || {})
 S.date = uaeToday()
-let R = {kind: 'manual', gold: {sell: null, retail: null, sellback: null}, silver: {sell: null, retail: null, sellback: null}, updated: null, live: false, retailSource: '', yoy: null}
+let R = {silverRetail: null, kind: 'manual', gold: {sell: null, retail: null, sellback: null}, silver: {sell: null, retail: null, sellback: null}, updated: null, live: false, retailSource: '', yoy: null}
 
 /* ===================== rates ===================== */
 // Live first (local server, then the API directly), then the saved snapshot shipped with the page.
@@ -352,6 +352,8 @@ function applyRates(d) {
   R.retailSource = d.gold.retail?.source || ''
   R.silver.sell = d.silver?.sell ?? null
   R.silver.sellback = d.silver?.sellback ?? null
+  const sr = d.silver?.retail || d.silver_retail
+  if (sr?.rate) { R.silver.retail = sr.rate; R.silverRetail = {source: sr.source || '', at: sr.updated_at || null} }
   R.updated = d.updated_at || null
   R.live = !!d.live
   R.yoy = d.gold.yoy_pct ?? null
@@ -359,8 +361,6 @@ function applyRates(d) {
   const snap = store('cs-snap') || {}
   const now = Date.now()
   if (!snap.cur || now - snap.cur.t >= 3 * 3600e3) store('cs-snap', {prev: snap.cur || snap.prev || null, cur: {t: now, gold: R.gold.sell, silver: R.silver.sell}})
-  const keep = store('cs-manual') || {}
-  if (keep.sRetail) R.silver.retail = keep.sRetail
   syncInputs()
 }
 async function loadRates(toastIt) {
@@ -369,9 +369,13 @@ async function loadRates(toastIt) {
   if (got) {
     const {d, kind} = got
     applyRates(d)
+    if (kind === 'live' && !R.silver.retail) {
+      try { const sn = await (await fetch('./rates.json', {cache: 'no-store'})).json(); if (sn.silver_retail?.rate) { R.silver.retail = sn.silver_retail.rate; R.silverRetail = {source: sn.silver_retail.source || '', at: sn.silver_retail.updated_at || null, saved: true}; syncInputs() } } catch {}
+    }
     R.kind = kind
     if (kind === 'live') setStatus('live', `${d.live ? 'Live' : 'Last known'} rates · ${fmtTime(R.updated)} UAE`)
     else setStatus('warn', `Saved rates from ${fmtTime(R.updated)} UAE. Check them against cridora.com and edit below before posting.`)
+    if (R.silverRetail?.at && (kind === 'snapshot' || R.silverRetail.saved)) $('#statusTxt').textContent += ` Silver retail ${R.silver.retail} from ${sourceLabel(R.silverRetail.source)}, ${fmtTime(R.silverRetail.at)} UAE.`
     if (toastIt) toast(kind === 'live' ? 'Rates refreshed' : 'Showing the saved rates')
   } else {
     const m = store('cs-manual')
@@ -380,7 +384,7 @@ async function loadRates(toastIt) {
   }
   renderAll()
 }
-const sourceLabel = k => ({dubaicityofgold: 'Dubai City of Gold'}[k] || k)
+const sourceLabel = k => ({dubaicityofgold: 'Dubai City of Gold', mintjewels: 'Mint Jewels'}[k] || k)
 function setStatus(kind, txt) { const s = $('#status'); s.className = 'status ' + kind; $('#statusTxt').textContent = txt }
 const fmtTime = iso => iso ? new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Dubai', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false}).format(new Date(iso)).replace(',', ' ·') : ''
 function syncInputs() {
@@ -391,7 +395,7 @@ function readInputs() {
   R.kind = 'manual'
   R.gold.sell = num($('#gSell').value); R.gold.retail = num($('#gRetail').value)
   R.silver.sell = num($('#sSell').value); R.silver.retail = num($('#sRetail').value)
-  store('cs-manual', {gold: {sell: R.gold.sell, retail: R.gold.retail}, silver: {sell: R.silver.sell}, sRetail: R.silver.retail, updated: R.updated})
+  store('cs-manual', {gold: {sell: R.gold.sell, retail: R.gold.retail}, silver: {sell: R.silver.sell}, updated: R.updated})
 }
 function delta(sell, retail, dp) {
   if (sell == null || retail == null || retail <= sell) return null
@@ -503,8 +507,8 @@ function rateLine(l) {
   }
   if (S.metal !== 'gold' && s.sell) {
     const ds = delta(s.sell, s.retail, 3)
-    if (l === 'en') parts.push(ds ? `Silver 999: AED ${money(s.sell, 3)}/g, AED ${money(ds.aed, 3)}/g below the retail benchmark.` : `Silver 999: AED ${money(s.sell, 3)}/g.`)
-    else parts.push(ds ? `الفضة 999: ${money(s.sell, 3)} درهم/غ، أقل بمقدار ${money(ds.aed, 3)} درهم/غ من سعر التجزئة المرجعي.` : `الفضة 999: ${money(s.sell, 3)} درهم/غ.`)
+    if (l === 'en') parts.push(ds ? `Silver 999: AED ${money(s.sell, 3)}/g, AED ${money(ds.aed, 3)}/g below the UAE retail benchmark.` : s.retail ? `Silver 999: AED ${money(s.sell, 3)}/g with Cridora. UAE retail benchmark: AED ${money(s.retail, 3)}/g.` : `Silver 999: AED ${money(s.sell, 3)}/g.`)
+    else parts.push(ds ? `الفضة 999: ${money(s.sell, 3)} درهم/غ، أقل بمقدار ${money(ds.aed, 3)} درهم/غ من سعر التجزئة المرجعي في الإمارات.` : s.retail ? `الفضة 999: ${money(s.sell, 3)} درهم/غ مع كريدورا. سعر التجزئة المرجعي في الإمارات: ${money(s.retail, 3)} درهم/غ.` : `الفضة 999: ${money(s.sell, 3)} درهم/غ.`)
   }
   return parts.join(' ')
 }

@@ -123,7 +123,9 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
 .lang-ar .rc-price{justify-content:flex-end}
 .rc-price strong{font:600 96px/1 var(--sans);letter-spacing:-.035em;font-variant-numeric:tabular-nums;color:var(--gold)}
 .rc-price small{font:500 26px var(--sans);color:var(--muted)}
-.rc.silver .rc-price strong{color:var(--ink)}
+.rc.silver .rc-price strong,.rc.ret .rc-price strong{color:var(--ink)}
+.rc-row b.sm{font-size:24px}
+.strip .coin.bar{width:auto;height:96px}
 .rc-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:22px;padding-top:20px;border-top:1px solid var(--line);font-size:21px;color:var(--muted)}
 .rc-row b{font:600 30px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;direction:ltr;white-space:nowrap}
 .delta{display:inline-flex;align-items:center;gap:12px;margin-top:20px;padding:10px 20px;border-radius:999px;background:color-mix(in srgb,var(--success) 15%,transparent);border:1px solid color-mix(in srgb,var(--success) 45%,transparent);color:var(--success);font:600 21px var(--sans)}
@@ -245,6 +247,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
     <div class="group"><h2>Design</h2><div class="chips" id="tpl"></div></div>
     <div class="group"><h2>Language</h2><div class="chips" id="lang"></div></div>
     <div class="group"><h2>Metal</h2><div class="chips" id="metal"></div></div>
+    <div class="group"><h2>Rates to show</h2><div class="chips" id="show"></div><p class="note" id="showNote" style="margin-top:8px"></p></div>
     <div class="group"><h2>Date</h2>
       <label class="field"><input type="date" id="date"></label>
     </div>
@@ -269,7 +272,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
           <label class="field">Silver retail AED/g<input id="sRetail" inputmode="decimal" placeholder="optional"></label>
         </div>
         <label class="field">Savings amounts (AED, comma separated)<input id="amounts" value="500, 1000, 5000"></label>
-        <p class="note">Gold, silver and the gold retail benchmark load live. The public pricing feed leaves out the silver retail rate, so it comes from a saved Mint Jewels reading (shown with its time). Edit any number here before posting.</p>
+        <p class="note">Gold, silver and the gold retail benchmark load automatically. There is no trusted silver retail source yet, so leave the silver retail field empty or type a rate you have checked. Edit any number here before posting.</p>
       </div>
     </details>
   </aside>
@@ -325,9 +328,10 @@ const TEMPLATES = [
   {id: 'bullion', name: 'Bullion', link: 'cridora.com/bullion'},
 ]
 const LANGS = [{id: 'both', name: 'English + Arabic'}, {id: 'en', name: 'English'}, {id: 'ar', name: 'العربية'}]
+const SHOWS = [{id: 'vs', name: 'Retail vs Cridora'}, {id: 'cridora', name: 'Cridora only'}, {id: 'retail', name: 'Retail only'}]
 const METALS = [{id: 'both', name: 'Gold + silver'}, {id: 'gold', name: 'Gold'}, {id: 'silver', name: 'Silver'}]
 
-const S = Object.assign({fmt: 'post', tpl: 'rates', lang: 'both', theme: 'dark', metal: 'both', date: uaeToday(), trend: 'auto0', angle: null, variant: 0, cEn: '', cAr: ''}, store('cs-state') || {})
+const S = Object.assign({fmt: 'post', tpl: 'rates', lang: 'both', theme: 'dark', metal: 'both', show: 'vs', date: uaeToday(), trend: 'auto0', angle: null, variant: 0, cEn: '', cAr: ''}, store('cs-state') || {})
 S.date = uaeToday()
 let R = {silverRetail: null, kind: 'manual', gold: {sell: null, retail: null, sellback: null}, silver: {sell: null, retail: null, sellback: null}, updated: null, live: false, retailSource: '', yoy: null}
 
@@ -369,13 +373,9 @@ async function loadRates(toastIt) {
   if (got) {
     const {d, kind} = got
     applyRates(d)
-    if (kind === 'live' && !R.silver.retail) {
-      try { const sn = await (await fetch('./rates.json', {cache: 'no-store'})).json(); if (sn.silver_retail?.rate) { R.silver.retail = sn.silver_retail.rate; R.silverRetail = {source: sn.silver_retail.source || '', at: sn.silver_retail.updated_at || null, saved: true}; syncInputs() } } catch {}
-    }
     R.kind = kind
     if (kind === 'live') setStatus('live', `${d.live ? 'Live' : 'Last known'} rates · ${fmtTime(R.updated)} UAE`)
     else setStatus('warn', `Saved rates from ${fmtTime(R.updated)} UAE. Check them against cridora.com and edit below before posting.`)
-    if (R.silverRetail?.at && (kind === 'snapshot' || R.silverRetail.saved)) $('#statusTxt').textContent += ` Silver retail ${R.silver.retail} from ${sourceLabel(R.silverRetail.source)}, ${fmtTime(R.silverRetail.at)} UAE.`
     if (toastIt) toast(kind === 'live' ? 'Rates refreshed' : 'Showing the saved rates')
   } else {
     const m = store('cs-manual')
@@ -499,16 +499,24 @@ const angleKey = () => S.angle || currentEvent().angles[0]
 const TAGS = {en: ['#Cridora', '#GoldUAE', '#DubaiGold', '#GoldRate'], ar: ['#كريدورا', '#الذهب_في_الإمارات', '#دبي']}
 const DISC = {en: 'Indicative rates. Prices change; gold and silver can rise or fall. Charges, premiums, delivery and VAT are separate.', ar: 'أسعار استرشادية. الأسعار تتغير وقد ترتفع أو تنخفض. الرسوم والعلاوات والتوصيل وضريبة القيمة المضافة منفصلة.'}
 function rateLine(l) {
-  const g = R.gold, s = R.silver, dg = delta(g.sell, g.retail, 2)
+  const g = R.gold, s = R.silver, dg = delta(g.sell, g.retail, 2), show = S.show
   const parts = []
-  if (S.metal !== 'silver' && g.sell) {
-    if (l === 'en') parts.push(dg ? `Live gold 24K: AED ${money(g.sell)}/g with Cridora, AED ${money(dg.aed)}/g below the UAE retail benchmark of AED ${money(g.retail)}/g.` : g.retail ? `Live gold 24K: AED ${money(g.sell)}/g with Cridora. UAE retail benchmark: AED ${money(g.retail)}/g. Compare the same weight and purity with all charges included.` : `Live gold 24K with Cridora: AED ${money(g.sell)}/g.`)
-    else parts.push(dg ? `سعر الذهب عيار 24 المباشر: ${money(g.sell)} درهم/غ مع كريدورا، أقل بمقدار ${money(dg.aed)} درهم/غ من سعر التجزئة المرجعي في الإمارات (${money(g.retail)} درهم/غ).` : g.retail ? `سعر الذهب عيار 24 المباشر: ${money(g.sell)} درهم/غ مع كريدورا. سعر التجزئة المرجعي في الإمارات: ${money(g.retail)} درهم/غ. قارن الوزن والنقاء نفسيهما مع احتساب جميع الرسوم.` : `سعر الذهب عيار 24 المباشر مع كريدورا: ${money(g.sell)} درهم/غ.`)
+  if (S.metal !== 'silver') {
+    if (show === 'retail') { if (g.retail) parts.push(l === 'en' ? `UAE retail benchmark, gold 24K: AED ${money(g.retail)}/g.` : `سعر التجزئة المرجعي للذهب عيار 24 في الإمارات: ${money(g.retail)} درهم/غ.`) }
+    else if (g.sell) {
+      if (show === 'cridora' || !g.retail) parts.push(l === 'en' ? `Live gold 24K with Cridora: AED ${money(g.sell)}/g.` : `سعر الذهب عيار 24 المباشر مع كريدورا: ${money(g.sell)} درهم/غ.`)
+      else if (l === 'en') parts.push(dg ? `Live gold 24K: AED ${money(g.sell)}/g with Cridora, AED ${money(dg.aed)}/g below the UAE retail benchmark of AED ${money(g.retail)}/g.` : `Live gold 24K: AED ${money(g.sell)}/g with Cridora. UAE retail benchmark: AED ${money(g.retail)}/g. Compare the same weight and purity with all charges included.`)
+      else parts.push(dg ? `سعر الذهب عيار 24 المباشر: ${money(g.sell)} درهم/غ مع كريدورا، أقل بمقدار ${money(dg.aed)} درهم/غ من سعر التجزئة المرجعي في الإمارات (${money(g.retail)} درهم/غ).` : `سعر الذهب عيار 24 المباشر: ${money(g.sell)} درهم/غ مع كريدورا. سعر التجزئة المرجعي في الإمارات: ${money(g.retail)} درهم/غ. قارن الوزن والنقاء نفسيهما مع احتساب جميع الرسوم.`)
+    }
   }
-  if (S.metal !== 'gold' && s.sell) {
+  if (S.metal !== 'gold') {
     const ds = delta(s.sell, s.retail, 3)
-    if (l === 'en') parts.push(ds ? `Silver 999: AED ${money(s.sell, 3)}/g, AED ${money(ds.aed, 3)}/g below the UAE retail benchmark.` : s.retail ? `Silver 999: AED ${money(s.sell, 3)}/g with Cridora. UAE retail benchmark: AED ${money(s.retail, 3)}/g.` : `Silver 999: AED ${money(s.sell, 3)}/g.`)
-    else parts.push(ds ? `الفضة 999: ${money(s.sell, 3)} درهم/غ، أقل بمقدار ${money(ds.aed, 3)} درهم/غ من سعر التجزئة المرجعي في الإمارات.` : s.retail ? `الفضة 999: ${money(s.sell, 3)} درهم/غ مع كريدورا. سعر التجزئة المرجعي في الإمارات: ${money(s.retail, 3)} درهم/غ.` : `الفضة 999: ${money(s.sell, 3)} درهم/غ.`)
+    if (show === 'retail') { if (s.retail) parts.push(l === 'en' ? `UAE retail benchmark, silver 999: AED ${money(s.retail, 3)}/g.` : `سعر التجزئة المرجعي للفضة 999 في الإمارات: ${money(s.retail, 3)} درهم/غ.`) }
+    else if (s.sell) {
+      if (show === 'cridora' || !s.retail) parts.push(l === 'en' ? `Silver 999 with Cridora: AED ${money(s.sell, 3)}/g.` : `الفضة 999 مع كريدورا: ${money(s.sell, 3)} درهم/غ.`)
+      else if (l === 'en') parts.push(ds ? `Silver 999: AED ${money(s.sell, 3)}/g, AED ${money(ds.aed, 3)}/g below the UAE retail benchmark.` : `Silver 999: AED ${money(s.sell, 3)}/g with Cridora. UAE retail benchmark: AED ${money(s.retail, 3)}/g.`)
+      else parts.push(ds ? `الفضة 999: ${money(s.sell, 3)} درهم/غ، أقل بمقدار ${money(ds.aed, 3)} درهم/غ من سعر التجزئة المرجعي في الإمارات.` : `الفضة 999: ${money(s.sell, 3)} درهم/غ مع كريدورا. سعر التجزئة المرجعي في الإمارات: ${money(s.retail, 3)} درهم/غ.`)
+    }
   }
   return parts.join(' ')
 }
@@ -541,19 +549,26 @@ const disclaimer = () => `<p class="disc">${L(DISC.en, DISC.ar)}</p>`
 const foot = link => `<div class="p-foot"><div class="foot-row"><span class="p-cta">${esc(link)}</span></div>${disclaimer()}</div>`
 const per = (en, ar) => L(en, ar, 'inl')
 
-function metalCard(m, one) {
-  const g = m === 'gold'
-  const r = R[m], dp = g ? 2 : 3
-  if (!r.sell) return ''
-  const d = delta(r.sell, r.retail, dp)
+function metalCard(m) {
+  const g = m === 'gold', r = R[m], dp = g ? 2 : 3, show = S.show
+  const retailOnly = show === 'retail'
+  const value = retailOnly ? r.retail : r.sell
+  if (!value) return ''
+  const d = show === 'vs' ? delta(r.sell, r.retail, dp) : null
   const name = g ? L('Gold', 'الذهب', 'inl') : L('Silver', 'الفضة', 'inl')
-  const sub = g ? '24K · 999.9' : '999';
-  return `<div class="rc ${m}">
+  const sub = g ? '24K · 999.9' : '999'
+  const lab = retailOnly ? L('UAE retail', 'سعر التجزئة', 'inl') : L('Cridora rate', 'سعر كريدورا', 'inl')
+  const src = g ? R.retailSource : R.silverRetail?.source
+  let row = ''
+  if (retailOnly) row = src ? `<div class="rc-row"><span>${L('Source', 'المصدر', 'inl')}</span><b class="sm">${esc(sourceLabel(src))}</b></div>` : ''
+  else if (show === 'vs' && r.retail) row = `<div class="rc-row"><span>${L('UAE retail', 'سعر التجزئة', 'inl')}</span><b>AED ${money(r.retail, dp)}</b></div>`
+  else if (r.sellback) row = `<div class="rc-row"><span>${L('Sell back', 'إعادة البيع', 'inl')}</span><b>AED ${money(r.sellback, dp)}</b></div>`
+  return `<div class="rc ${m}${retailOnly ? ' ret' : ''}">
     <img class="rc-art" src="${g ? IMG.barGold : IMG.barSilver}" alt="">
     <div class="rc-top"><div><div class="rc-name">${name}</div><div class="rc-sub">${sub}</div></div></div>
-    <div class="rc-lab">${L('Cridora rate', 'سعر كريدورا', 'inl')}</div>
-    <div class="rc-price"><small>AED</small><strong>${money(r.sell, dp)}</strong><small>/g</small></div>
-    ${r.retail ? `<div class="rc-row"><span>${L('UAE retail', 'سعر التجزئة', 'inl')}</span><b>AED ${money(r.retail, dp)}</b></div>` : r.sellback ? `<div class="rc-row"><span>${L('Sell back', 'إعادة البيع', 'inl')}</span><b>AED ${money(r.sellback, dp)}</b></div>` : ''}
+    <div class="rc-lab">${lab}</div>
+    <div class="rc-price"><small>AED</small><strong>${money(value, dp)}</strong><small>/g</small></div>
+    ${row}
     ${d ? `<div class="delta"><span>▼</span><span>${L(`AED ${money(d.aed, dp)}/g below retail`, `أقل من التجزئة بـ ${money(d.aed, dp)} درهم/غ`)}</span></div>` : ''}
   </div>`
 }
@@ -566,8 +581,13 @@ function ratesBody() {
 }
 function trendBody() {
   const ev = currentEvent(), ak = angleKey(), a = ANGLES[ak]
-  const g = R.gold, d = delta(g.sell, g.retail, 2)
-  const strip = g.sell ? `<div class="strip"><img class="coin" src="${IMG.coin}" alt=""><div class="meta"><div class="l">${L('Gold 24K · Cridora', 'ذهب عيار 24 · كريدورا', 'inl')}</div><div class="v"><small>AED</small>${money(g.sell)}<small>/g</small></div></div>${g.retail ? `<div class="r">${L('UAE retail', 'سعر التجزئة', 'inl')}<b>AED ${money(g.retail)}</b></div>` : ''}</div>` : ''
+  const m = S.metal === 'silver' ? 'silver' : 'gold', r = R[m], dp = m === 'gold' ? 2 : 3, show = S.show
+  const val = show === 'retail' ? r.retail : r.sell
+  const nm = m === 'gold' ? ['Gold 24K', 'ذهب عيار 24'] : ['Silver 999', 'فضة 999']
+  const who = show === 'retail' ? ['UAE retail', 'سعر التجزئة'] : ['Cridora', 'كريدورا']
+  const right = show === 'vs' && r.retail ? `<div class="r">${L('UAE retail', 'سعر التجزئة', 'inl')}<b>AED ${money(r.retail, dp)}</b></div>` : ''
+  const art = m === 'gold' ? `<img class="coin" src="${IMG.coin}" alt="">` : `<img class="coin bar" src="${IMG.barSilver}" alt="">`
+  const strip = val ? `<div class="strip">${art}<div class="meta"><div class="l">${L(`${nm[0]} · ${who[0]}`, `${nm[1]} · ${who[1]}`, 'inl')}</div><div class="v"><small>AED</small>${money(val, dp)}<small>/g</small></div></div>${right}</div>` : ''
   return `<div class="p-left"><div class="eyebrow">${L('Trending in the UAE', 'الأكثر تداولًا في الإمارات', 'inl')}</div>
     <h1>${L(esc(ev.en), esc(ev.ar))}</h1><div class="rule"></div>
     <p class="lede">${L(esc(ev.hook.en), esc(ev.hook.ar))}</p></div>
@@ -575,14 +595,22 @@ function trendBody() {
     <div class="box"><div class="k">${L('The Cridora angle', 'زاوية كريدورا')}</div><p>${L(esc(a.bridge.en[0]), esc(a.bridge.ar[0]))}</p></div>${strip}</div>`
 }
 function compareBody() {
-  const g = R.gold, d = delta(g.sell, g.retail, 2)
-  const rows = `<div class="cmp">
-    ${g.retail ? `<div class="cmp-row"><div class="n">${L('UAE retail benchmark', 'سعر التجزئة المرجعي')}<small>${esc(R.retailSource ? 'Gold 24K · ' + sourceLabel(R.retailSource) : 'Gold 24K')}</small></div><div class="p"><small>AED</small><strong>${money(g.retail)}</strong><small>/g</small></div></div>` : ''}
-    <div class="cmp-row me"><div class="n">${L('Cridora', 'كريدورا')}<small>${L('Gold 24K · live rate', 'ذهب عيار 24 · سعر مباشر', 'inl')}</small></div><div class="p"><small>AED</small><strong>${money(g.sell)}</strong><small>/g</small></div></div></div>`
-  const ladder = d ? `<div class="lad"><div>${L('On 10 g of metal', 'على 10 غرامات من المعدن')}<b>AED ${money(Math.round(d.aed * 1000) / 100)}</b></div><div>${L('Difference per gram', 'الفرق لكل غرام')}<b>${d.pct}%</b></div></div>` : ''
-  return `<div class="p-left"><div class="eyebrow">${L('Wholesale vs retail', 'الجملة مقابل التجزئة', 'inl')}</div>
-    <h1>${L('See the difference <em>live</em>', 'شاهد <em>الفرق</em> مباشرة')}</h1><div class="rule"></div>
-    <p class="lede">${L('Metal rate only. Bullion from partner refineries.', 'سعر المعدن فقط. سبائك من مصافٍ شريكة.')}</p></div>
+  const m = S.metal === 'silver' ? 'silver' : 'gold', r = R[m], dp = m === 'gold' ? 2 : 3, show = S.show
+  const metalEn = m === 'gold' ? 'Gold 24K' : 'Silver 999', metalAr = m === 'gold' ? 'ذهب عيار 24' : 'فضة 999'
+  const srcKey = m === 'gold' ? R.retailSource : R.silverRetail?.source
+  const d = show === 'vs' ? delta(r.sell, r.retail, dp) : null
+  const retailRow = r.retail && show !== 'cridora' ? `<div class="cmp-row"><div class="n">${L('UAE retail benchmark', 'سعر التجزئة المرجعي')}<small>${esc(metalEn + (srcKey ? ' · ' + sourceLabel(srcKey) : ''))}</small></div><div class="p"><small>AED</small><strong>${money(r.retail, dp)}</strong><small>/g</small></div></div>` : ''
+  const meRow = r.sell && show !== 'retail' ? `<div class="cmp-row me"><div class="n">${L('Cridora', 'كريدورا')}<small>${L(`${metalEn} · live rate`, `${metalAr} · سعر مباشر`, 'inl')}</small></div><div class="p"><small>AED</small><strong>${money(r.sell, dp)}</strong><small>/g</small></div></div>` : ''
+  const rows = `<div class="cmp">${retailRow}${meRow}</div>`
+  const ladder = d ? `<div class="lad"><div>${L('On 10 g of metal', 'على 10 غرامات من المعدن')}<b>AED ${money(Math.round(d.aed * 10 * 100) / 100)}</b></div><div>${L('Difference per gram', 'الفرق لكل غرام')}<b>${d.pct}%</b></div></div>` : ''
+  const T = {
+    vs: [['Wholesale vs retail', 'الجملة مقابل التجزئة'], ['See the difference <em>live</em>', 'شاهد <em>الفرق</em> مباشرة'], ['Metal rate only. Bullion from partner refineries.', 'سعر المعدن فقط. سبائك من مصافٍ شريكة.']],
+    retail: [['UAE retail benchmark', 'سعر التجزئة المرجعي'], ['The UAE <em>retail</em> rate', 'سعر <em>التجزئة</em> في الإمارات'], ['Metal rate only. Per gram, in AED.', 'سعر المعدن فقط. لكل غرام بالدرهم.']],
+    cridora: [['Cridora live rate', 'سعر كريدورا المباشر'], ['The <em>Cridora</em> rate', 'سعر <em>كريدورا</em>'], ['Metal rate only. Bullion from partner refineries.', 'سعر المعدن فقط. سبائك من مصافٍ شريكة.']],
+  }[show]
+  return `<div class="p-left"><div class="eyebrow">${L(T[0][0], T[0][1], 'inl')}</div>
+    <h1>${L(T[1][0], T[1][1])}</h1><div class="rule"></div>
+    <p class="lede">${L(T[2][0], T[2][1])}</p></div>
     <div style="display:flex;flex-direction:column;gap:22px">${rows}${ladder}</div>`
 }
 function savingsBody() {
@@ -643,6 +671,10 @@ function renderControls() {
   chips($('#tpl'), TEMPLATES, 'tpl', id => { S.tpl = id; save(); renderAll() })
   chips($('#lang'), LANGS, 'lang', id => { S.lang = id; save(); renderAll() })
   chips($('#metal'), METALS, 'metal', id => { S.metal = id; save(); renderAll() })
+  chips($('#show'), SHOWS, 'show', id => { S.show = id; save(); renderAll() })
+  const usesRates = ['rates', 'trend', 'compare'].includes(S.tpl)
+  $('#show').querySelectorAll('.chip').forEach(c => { c.disabled = !usesRates; c.style.opacity = usesRates ? '' : '.45' })
+  $('#showNote').textContent = usesRates ? '' : 'This design does not show market rates, so this choice does not apply.'
   const list = trendList()
   if (!list.find(e => e.id === S.trend) && S.trend !== 'custom') S.trend = list[0].id
   chips($('#trends'), list.map(e => ({id: e.id, name: e.en + (e.approx ? ' ~' : ''), title: e.approx ? 'Date approximate, check before posting' : ''})), 'trend', id => { S.trend = id; S.angle = null; save(); renderAll() })
@@ -682,7 +714,7 @@ function renderPoster() {
   fit()
 }
 function renderAll() { renderControls(); renderPoster(); renderCaptions() }
-const save = () => store('cs-state', {fmt: S.fmt, tpl: S.tpl, lang: S.lang, theme: S.theme, metal: S.metal, angle: S.angle, variant: S.variant, trend: S.trend, cEn: S.cEn, cAr: S.cAr})
+const save = () => store('cs-state', {fmt: S.fmt, tpl: S.tpl, lang: S.lang, theme: S.theme, metal: S.metal, show: S.show, angle: S.angle, variant: S.variant, trend: S.trend, cEn: S.cEn, cAr: S.cAr})
 
 /* ===================== export ===================== */
 async function renderPng(fmtId) {

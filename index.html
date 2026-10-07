@@ -273,7 +273,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
           <label class="field">Silver retail AED/g<input id="sRetail" inputmode="decimal" placeholder="optional"></label>
         </div>
         <label class="field">Savings amounts (AED, comma separated)<input id="amounts" value="500, 1000, 5000"></label>
-        <p class="note">Gold, silver and the gold retail benchmark load automatically. The silver retail rate is a daily reading saved with the page (source and date shown in the status line), so check it before posting and edit it here if it has moved.</p>
+        <p class="note">Gold, silver and the gold retail benchmark load automatically. The silver retail rate is a Dubai silver jeweller's price from Khaleej Times, updated twice a day (source and date in the status line). Check it before posting and edit it here if it has moved.</p>
       </div>
     </details>
   </aside>
@@ -350,6 +350,14 @@ async function fetchRates() {
   }
   return null
 }
+// Silver retail reading (Khaleej Times, a Dubai silver jeweller). Ignored once it is more than 2 days old.
+const daysOld = d => Math.round((new Date(uaeToday() + 'T12:00:00Z') - new Date(d + 'T12:00:00Z')) / 864e5)
+function takeSilverRetail(sr) {
+  if (!sr?.rate || (sr.as_of && daysOld(sr.as_of) > 2)) return false
+  R.silver.retail = sr.rate
+  R.silverRetail = {source: sr.source || '', date: sr.as_of || null, session: sr.session || '', via: sr.via || ''}
+  return true
+}
 function applyRates(d) {
   R.gold.sell = d.gold.sell ?? null
   R.gold.sellback = d.gold.sellback ?? null
@@ -357,8 +365,8 @@ function applyRates(d) {
   R.retailSource = d.gold.retail?.source || ''
   R.silver.sell = d.silver?.sell ?? null
   R.silver.sellback = d.silver?.sellback ?? null
-  const sr = d.silver?.retail || d.silver_retail
-  if (sr?.rate) { R.silver.retail = sr.rate; R.silverRetail = {source: sr.source || '', date: sr.as_of || null} }
+  R.silver.retail = null; R.silverRetail = null
+  takeSilverRetail(d.silver?.retail || d.silver_retail)
   R.updated = d.updated_at || null
   R.live = !!d.live
   R.yoy = d.gold.yoy_pct ?? null
@@ -376,12 +384,14 @@ async function loadRates(toastIt) {
     applyRates(d)
     // The public feed has no silver retail rate. Take the dated reading saved with the page.
     if (!R.silver.retail) {
-      try { const sn = await (await fetch('./rates.json', {cache: 'no-store'})).json(); if (sn.silver_retail?.rate) { R.silver.retail = sn.silver_retail.rate; R.silverRetail = {source: sn.silver_retail.source || '', date: sn.silver_retail.as_of || null}; syncInputs() } } catch {}
+      try { const sn = await (await fetch('./rates.json', {cache: 'no-store'})).json(); if (takeSilverRetail(sn.silver_retail)) syncInputs() } catch {}
     }
     R.kind = kind
     if (kind === 'live') setStatus('live', `${d.live ? 'Live' : 'Last known'} rates · ${fmtTime(R.updated)} UAE`)
-    else setStatus('warn', `Saved rates from ${fmtTime(R.updated)} UAE. Check them against cridora.com and edit below before posting.`)
-    if (R.silverRetail?.date) $('#statusTxt').textContent += ` Silver retail ${R.silver.retail} is a daily reading from ${sourceLabel(R.silverRetail.source)}, ${fmtDate(R.silverRetail.date)}.`
+    else setStatus('warn', `Rates saved at ${fmtTime(R.updated)} UAE (refreshed about every 30 minutes). Check them against cridora.com and edit below before posting.`)
+    $('#statusTxt').textContent += R.silverRetail
+      ? ` Silver retail ${R.silver.retail}: ${R.silverRetail.via ? R.silverRetail.via + ' via ' : ''}${sourceLabel(R.silverRetail.source)}, ${R.silverRetail.date ? fmtDate(R.silverRetail.date) : ''} ${R.silverRetail.session}.`
+      : ' No current silver retail rate; type one in if you need it.'
     if (toastIt) toast(kind === 'live' ? 'Rates refreshed' : 'Showing the saved rates')
   } else {
     const m = store('cs-manual')
@@ -390,7 +400,7 @@ async function loadRates(toastIt) {
   }
   renderAll()
 }
-const sourceLabel = k => ({dubaicityofgold: 'Dubai City of Gold', uaegoldprice: 'UAE Gold Price'}[k] || k)
+const sourceLabel = k => ({dubaicityofgold: 'Dubai City of Gold', uaegoldprice: 'UAE Gold Price', khaleejtimes: 'Khaleej Times'}[k] || k)
 const fmtDate = d => new Intl.DateTimeFormat('en-GB', {timeZone: 'UTC', day: 'numeric', month: 'short'}).format(new Date(d + 'T12:00:00Z'))
 function setStatus(kind, txt) { const s = $('#status'); s.className = 'status ' + kind; $('#statusTxt').textContent = txt }
 const fmtTime = iso => iso ? new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Dubai', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false}).format(new Date(iso)).replace(',', ' ·') : ''
